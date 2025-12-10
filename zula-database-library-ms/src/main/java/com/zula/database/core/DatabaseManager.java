@@ -87,8 +87,16 @@ public class DatabaseManager {
                     "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" +
                     ") ENGINE=InnoDB");
 
-            handle.execute("CREATE INDEX IF NOT EXISTS " + outboxIndex + " ON " + outboxTable + " (status)");
-            handle.execute("CREATE INDEX IF NOT EXISTS " + inboxIndex + " ON " + inboxTable + " (status)");
+            try {
+                handle.execute("CREATE INDEX " + outboxIndex + " ON " + outboxTable + " (status)");
+            } catch (Exception ignored) {
+                // Some MySQL versions throw if the index already exists; ignore the error.
+            }
+            try {
+                handle.execute("CREATE INDEX " + inboxIndex + " ON " + inboxTable + " (status)");
+            } catch (Exception ignored) {
+                // ignore duplicate-index failures
+            }
         });
 
         System.out.println("Zula Database Manager ensured queue schema exists: " + schema + " at " + LocalDateTime.now());
