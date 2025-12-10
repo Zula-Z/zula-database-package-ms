@@ -6,9 +6,13 @@ Overview
 - The library exposes a `Jdbi` bean and a `DataSourceTransactionManager` for use in Spring applications.
 - Uses JDBI 3 (SqlObject plugin supported) for DAO implementation and mapping.
 
+This repository is the MySQL-targeted variant (`zula-database-library-ms`) that ships with the MySQL JDBC driver and Flyway MySQL support. `DatabaseManager` now inspects the JDBC metadata at startup so that the queue schema creation uses `AUTO_INCREMENT` and MySQL `DATETIME` columns when connected to MySQL, but it still falls back to PostgreSQL DDL (`BIGSERIAL`, `TIMESTAMP`, `IF NOT EXISTS` indexes) when running against a PostgreSQL driver. This avoids the `BIGSERIAL` syntax error when an integration service uses a MySQL database while keeping backwards compatibility with PostgreSQL consumers.
+
 Key changes / migration notes
 - Reliance on JPA/Hibernate has been removed. Do NOT include `spring-boot-starter-data-jpa` in projects that depend on this library.
 - The application using this library must provide a `DataSource` (via Spring Boot `spring.datasource.*` properties or custom configuration).
+
+For MySQL-based services keep `zula.database.auto-create-queue-schema` enabled (the default) so `DatabaseManager#createQueueSchemaAndTables` automatically creates each service-specific queue schema and its `message_inbox`/`message_outbox` tables with the appropriate dialect. Consumer code does not need to worry about the underlying SQL unless you disable the auto-create flag and provide your own migrations.
 
 Required dependencies (pom.xml)
 - Remove:
@@ -146,6 +150,18 @@ Add the following dependencies to a consuming project's `pom.xml` (adjust versio
   <version>42.5.4</version>
 </dependency>
 
+<!-- Optional: MySQL support -->
+<dependency>
+  <groupId>com.mysql</groupId>
+  <artifactId>mysql-connector-j</artifactId>
+  <version>8.0.33</version>
+</dependency>
+<dependency>
+  <groupId>org.flywaydb</groupId>
+  <artifactId>flyway-mysql</artifactId>
+  <version>11.0.0</version>
+</dependency>
+
 <!-- Optional: Flyway if database migrations are used by the consumer -->
 <dependency>
   <groupId>org.flywaydb</groupId>
@@ -171,6 +187,8 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+
+If your application uses MySQL instead of PostgreSQL, depend on `mysql-connector-j` and `flyway-mysql` and point the `spring.datasource.url` to your MySQL endpoint. The dialect-aware queue schema creator described above will then emit the MySQL-friendly `AUTO_INCREMENT` statements that prevent the `BIGSERIAL` syntax error.
 
 # Optional: disable JPA auto-configuration if some other dependency brings it in
 # spring:
