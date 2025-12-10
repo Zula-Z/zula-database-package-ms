@@ -21,7 +21,7 @@ jobs:
 
       - name: Publish with Maven
         run: |
-          cd zula-database-library
+          cd zula-database-library-ms
           mvn -B clean deploy -DskipTests
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
