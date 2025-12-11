@@ -6,13 +6,13 @@ Overview
 - The library exposes a `Jdbi` bean and a `DataSourceTransactionManager` for use in Spring applications.
 - Uses JDBI 3 (SqlObject plugin supported) for DAO implementation and mapping.
 
-This repository is the MySQL-targeted variant (`zula-database-library-ms`) that ships with the MySQL JDBC driver and Flyway MySQL support. `DatabaseManager` now inspects the JDBC metadata at startup so that the queue schema creation uses `AUTO_INCREMENT` and MySQL `DATETIME` columns when connected to MySQL, but it still falls back to PostgreSQL DDL (`BIGSERIAL`, `TIMESTAMP`, `IF NOT EXISTS` indexes) when running against a PostgreSQL driver. This avoids the `BIGSERIAL` syntax error when an integration service uses a MySQL database while keeping backwards compatibility with PostgreSQL consumers.
+- This repository is the MySQL-only variant (`zula-database-library-ms`) that ships with the MySQL JDBC driver and Flyway MySQL support. `DatabaseManager#createQueueSchemaAndTables` only emits MySQL DDL (`AUTO_INCREMENT`, `DATETIME`, `ENGINE=InnoDB`) and therefore requires the consuming service to connect to MySQL. Keep `zula.database.auto-create-queue-schema` enabled so the library manages queue schema creation for each service without manual migrations.
 
 Key changes / migration notes
 - Reliance on JPA/Hibernate has been removed. Do NOT include `spring-boot-starter-data-jpa` in projects that depend on this library.
 - The application using this library must provide a `DataSource` (via Spring Boot `spring.datasource.*` properties or custom configuration).
 
-For MySQL-based services keep `zula.database.auto-create-queue-schema` enabled (the default) so `DatabaseManager#createQueueSchemaAndTables` automatically creates each service-specific queue schema and its `message_inbox`/`message_outbox` tables with the appropriate dialect. Consumer code does not need to worry about the underlying SQL unless you disable the auto-create flag and provide your own migrations.
+For MySQL services keep `zula.database.auto-create-queue-schema` enabled (the default) so `DatabaseManager#createQueueSchemaAndTables` creates each service-specific queue schema and its `message_inbox`/`message_outbox` tables with the MySQL statements shown above. Consumer code does not need to worry about the underlying SQL unless you disable the auto-create flag and provide your own migrations.
 
 Required dependencies (pom.xml)
 - Remove:
@@ -22,8 +22,10 @@ Required dependencies (pom.xml)
   - `org.springframework.boot:spring-boot-starter-jdbc`
   - `org.jdbi:jdbi3-core`
   - `org.jdbi:jdbi3-sqlobject`
-  - (Optional) `org.jdbi:jdbi3-postgres` or other dialect helpers if needed
-  - `org.flywaydb:flyway-core` and `org.flywaydb:flyway-database-postgresql` (if Flyway migrations are used; version 11.0.0+ to support PostgreSQL 17)
+  - `org.jdbi:jdbi3-spring5`
+  - `com.mysql:mysql-connector-j`
+  - `org.flywaydb:flyway-core`
+  - `org.flywaydb:flyway-mysql`
 
 Example pom dependency snippet
 
@@ -46,11 +48,28 @@ Example pom dependency snippet
     <version>3.37.0</version>
   </dependency>
 
-  <!-- Optional DB-specific support -->
   <dependency>
     <groupId>org.jdbi</groupId>
-    <artifactId>jdbi3-postgres</artifactId>
+    <artifactId>jdbi3-spring5</artifactId>
     <version>3.37.0</version>
+  </dependency>
+
+  <dependency>
+    <groupId>com.mysql</groupId>
+    <artifactId>mysql-connector-j</artifactId>
+    <version>8.0.33</version>
+  </dependency>
+
+  <dependency>
+    <groupId>org.flywaydb</groupId>
+    <artifactId>flyway-core</artifactId>
+    <version>11.0.0</version>
+  </dependency>
+
+  <dependency>
+    <groupId>org.flywaydb</groupId>
+    <artifactId>flyway-mysql</artifactId>
+    <version>11.0.0</version>
   </dependency>
 </dependencies>
 ```
@@ -116,17 +135,16 @@ spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.orm.jpa.Hibe
 
 Consumer setup (pom.xml and application.yml)
 
-Add the following dependencies to a consuming project's `pom.xml` (adjust versions as needed and/or manage Spring Boot via the parent `spring-boot-starter-parent`):
+Add the following dependencies to a consuming project's `pom.xml` (adjust versions as needed or manage Spring Boot via the parent `spring-boot-starter-parent`):
 
 ```xml
-<!-- Spring Boot JDBC starter (version normally managed by the parent) -->
+<!-- Spring Boot JDBC starter (managed via the parent if there is one) -->
 <dependency>
   <groupId>org.springframework.boot</groupId>
   <artifactId>spring-boot-starter-jdbc</artifactId>
-  <version>2.7.0</version>
 </dependency>
 
-<!-- JDBI core and SqlObject support (matches this library) -->
+<!-- JDBI core/sqlobject support -->
 <dependency>
   <groupId>org.jdbi</groupId>
   <artifactId>jdbi3-core</artifactId>
@@ -143,14 +161,7 @@ Add the following dependencies to a consuming project's `pom.xml` (adjust versio
   <version>3.37.1</version>
 </dependency>
 
-<!-- Add the JDBC driver for the target database (example: PostgreSQL) -->
-<dependency>
-  <groupId>org.postgresql</groupId>
-  <artifactId>postgresql</artifactId>
-  <version>42.5.4</version>
-</dependency>
-
-<!-- Optional: MySQL support -->
+<!-- MySQL driver & Flyway support -->
 <dependency>
   <groupId>com.mysql</groupId>
   <artifactId>mysql-connector-j</artifactId>
@@ -158,21 +169,15 @@ Add the following dependencies to a consuming project's `pom.xml` (adjust versio
 </dependency>
 <dependency>
   <groupId>org.flywaydb</groupId>
-  <artifactId>flyway-mysql</artifactId>
-  <version>11.0.0</version>
-</dependency>
-
-<!-- Optional: Flyway if database migrations are used by the consumer -->
-<dependency>
-  <groupId>org.flywaydb</groupId>
   <artifactId>flyway-core</artifactId>
   <version>11.0.0</version>
 </dependency>
 <dependency>
   <groupId>org.flywaydb</groupId>
-  <artifactId>flyway-database-postgresql</artifactId>
+  <artifactId>flyway-mysql</artifactId>
   <version>11.0.0</version>
 </dependency>
+</dependencies>
 ```
 
 Example `application.yml` for a consuming Spring Boot service:
@@ -180,15 +185,13 @@ Example `application.yml` for a consuming Spring Boot service:
 ```yaml
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/mydb
+    url: jdbc:mysql://localhost:3306/mydb
     username: myuser
     password: secret
-    driver-class-name: org.postgresql.Driver
+    driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
     enabled: true
     locations: classpath:db/migration
-
-If your application uses MySQL instead of PostgreSQL, depend on `mysql-connector-j` and `flyway-mysql` and point the `spring.datasource.url` to your MySQL endpoint. The dialect-aware queue schema creator described above will then emit the MySQL-friendly `AUTO_INCREMENT` statements that prevent the `BIGSERIAL` syntax error.
 
 # Optional: disable JPA auto-configuration if some other dependency brings it in
 # spring:
