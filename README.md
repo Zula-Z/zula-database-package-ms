@@ -84,7 +84,7 @@ Example application properties (Spring Boot)
 ```yaml
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/mydb
+    url: jdbc:mysql://localhost:5432/mydb
     username: myuser
     password: secret
   flyway:
